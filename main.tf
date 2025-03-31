@@ -199,6 +199,12 @@ module "ec2" {
   iam_instance_profile   = aws_iam_instance_profile.seafile_instance_profile.name
   associate_public_ip_address = true
 
+  oot_block_device {
+    volume_size = 200 
+    volume_type = "gp2" 
+    delete_on_termination = true
+  }
+
   user_data = <<-EOF
               #!/bin/bash
               sudo yum update -y
