@@ -24,14 +24,11 @@ resource "aws_iam_policy" "seafile_s3_access_policy" {
       {
         Effect = "Allow"
         Action = [
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:ListBucket",
-          "s3:DeleteObject"
+          "s3:*"
         ]
         Resource = [
           "arn:aws:s3:::seafile-storage-bucket-*",
-          "arn:aws:s3:::seafile-storage-bucket-*/*"
+          "arn:aws:s3:::seafile-storage-bucket-*/*",
         ]
       }
     ]
@@ -106,13 +103,33 @@ module "vpc" {
 }
 
 # Create the S3 bucket which seafile will use
-module "s3" {
+module "s3-commit" {
   source  = "terraform-aws-modules/s3-bucket/aws"
   version = "~> 4.0"
 
-  bucket = "seafile-storage-bucket-${random_id.bucket_suffix.hex}"
+  bucket = "seafile-storage-bucket-commit${random_id.bucket_suffix.hex}"
   tags = {
-    Name = "seafile-storage-bucket"
+    Name = "Seafile Commit Objects"
+  }
+}
+
+module "s3-fs" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "~> 4.0"
+
+  bucket = "seafile-storage-bucket-fs-${random_id.bucket_suffix.hex}"
+  tags = {
+    Name = "Seafile FS Objects"
+  }
+}
+
+module "s3-block" {
+  source  = "terraform-aws-modules/s3-bucket/aws"
+  version = "~> 4.0"
+
+  bucket = "seafile-storage-bucket-block-${random_id.bucket_suffix.hex}"
+  tags = {
+    Name = "Seafile Block Objects"
   }
 }
 
@@ -175,7 +192,7 @@ module "ec2" {
 
   name                   = "seafile-instance"
   ami                    = data.aws_ami.amazon_linux_2.id
-  instance_type          = "t2.micro"
+  instance_type          = var.instance_type
   subnet_id              = module.vpc.public_subnets[0]
   vpc_security_group_ids = [aws_security_group.seafile_sg.id]
   key_name               = aws_key_pair.seafile_key_pair.key_name

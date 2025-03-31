@@ -4,3 +4,7 @@ variable "region" {
 variable "avz" {
   default = ["ap-southeast-1a"]
 }
+
+variable "instance_type" {
+  default = "t3a.xlarge"
+}
