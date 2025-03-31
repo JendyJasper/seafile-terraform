@@ -2,6 +2,15 @@ provider "aws" {
   region = var.region
 }
 
+terraform {
+  backend "s3" {
+    bucket         = "terraform-state-seafile" 
+    key            = "seafile-terraform/terraform.tfstate"
+    region         = "ap-southeast-1"
+    dynamodb_table = "terraform-locks"
+  }
+}
+
 # Get the current AWS account ID
 data "aws_caller_identity" "current" {}
 
