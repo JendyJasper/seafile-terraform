@@ -191,7 +191,7 @@ module "ec2" {
 
 # Create an Elastic IP
 resource "aws_eip" "seafile_eip" {
-  vpc = true
+  domain = "vpc"
   tags = {
     Name = "seafile-eip"
   }
