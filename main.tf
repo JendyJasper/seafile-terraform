@@ -201,13 +201,18 @@ module "ec2" {
 
   user_data = <<-EOF
               #!/bin/bash
-              yum update -y
-              yum install -y docker
-              systemctl start docker
-              systemctl enable docker
-              usermod -aG docker ec2-user
-              docker pull seafileltd/seafile:latest
-              docker run -d --name seafile -p 80:80 -p 443:443 -v /opt/seafile:/shared seafileltd/seafile:latest
+              sudo yum update -y
+              sudo amazon-linux-extras install docker
+              sudo yum install docker
+              sudo service docker start
+              sudo systemctl enable docker
+              sudo usermod -a -G docker ec2-user
+              # Install Docker Compose
+              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+
+              mkdir /opt/seafile
+              cd /opt/seafile
               EOF
 
   tags = {
