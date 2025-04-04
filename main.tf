@@ -4,80 +4,67 @@ provider "aws" {
 
 terraform {
   backend "s3" {
-    bucket         = "terraform-state-seafile"
+    bucket         = "placeholder"
     key            = "seafile-terraform/terraform.tfstate"
-    region         = "ap-southeast-1"
-    dynamodb_table = "terraform-locks"
+    region         = "placeholder"
+    dynamodb_table = "placeholder"
   }
 }
 
-# Create an IAM policy for S3 and full SSM access (for EC2 role)
+# IAM Policy for EC2 (S3 and SSM access)
 resource "aws_iam_policy" "seafile_s3_and_ssm_access_policy" {
   name        = "SeafileS3AndSSMAccessPolicy"
-  description = "Policy for Seafile EC2 instance to access S3 and all SSM parameters under /seafile/*"
+  description = "Policy for Seafile EC2 instance to access S3 and SSM parameters under /seafile/*"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = ["s3:*"]
-        Resource = [
-          "arn:aws:s3:::seafile-storage-bucket-*",
-          "arn:aws:s3:::seafile-storage-bucket-*/*"
-        ]
+        Effect   = "Allow"
+        Action   = ["s3:*"]
+        Resource = ["arn:aws:s3:::seafile-storage-bucket-*", "arn:aws:s3:::seafile-storage-bucket-*/*"]
       },
       {
-        Effect = "Allow"
-        Action = ["ssm:*"]
+        Effect   = "Allow"
+        Action   = ["ssm:*"]
         Resource = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/seafile/*"
       }
     ]
   })
 }
 
-# Create an IAM role for the EC2 instance
+# IAM Role for EC2
 resource "aws_iam_role" "seafile_ec2_role" {
   name = "SeafileEC2Role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          Service = "ec2.amazonaws.com"
-        }
-        Action = "sts:AssumeRole"
-      }
-    ]
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
   })
 }
 
-# Attach the S3 and SSM policy to the EC2 role
 resource "aws_iam_role_policy_attachment" "seafile_s3_and_ssm_access_policy_attachment" {
   role       = aws_iam_role.seafile_ec2_role.name
   policy_arn = aws_iam_policy.seafile_s3_and_ssm_access_policy.arn
 }
 
-# Create an IAM instance profile for the EC2 instance
 resource "aws_iam_instance_profile" "seafile_instance_profile" {
   name = "seafile-instance-profile"
   role = aws_iam_role.seafile_ec2_role.name
 }
 
-# Create an IAM user for Seafile service account
+# IAM User for Seafile Service Account
 resource "aws_iam_user" "seafile_service_account" {
   name = "seafile-service-account"
-  tags = {
-    Name = "Seafile Service Account"
-  }
+  tags = { Name = "Seafile Service Account" }
 }
 
-# Create an access key for the IAM user
 resource "aws_iam_access_key" "seafile_service_account_key" {
   user = aws_iam_user.seafile_service_account.name
 }
 
-# Store the access key and secret key in Parameter Store
 resource "aws_ssm_parameter" "seafile_iam_credentials" {
   name        = "/seafile/iam_user/credentials"
   description = "IAM credentials for Seafile service account"
@@ -88,32 +75,25 @@ resource "aws_ssm_parameter" "seafile_iam_credentials" {
   })
 }
 
-# Create a new S3 policy for the service account
 resource "aws_iam_policy" "seafile_service_account_s3_policy" {
   name        = "SeafileServiceAccountS3Policy"
   description = "Policy for Seafile service account to access S3"
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = ["s3:*"]
-        Resource = [
-          "arn:aws:s3:::seafile-storage-bucket-*",
-          "arn:aws:s3:::seafile-storage-bucket-*/*"
-        ]
-      }
-    ]
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:*"]
+      Resource = ["arn:aws:s3:::seafile-storage-bucket-*", "arn:aws:s3:::seafile-storage-bucket-*/*"]
+    }]
   })
 }
 
-# Attach the new S3 policy to the service account
 resource "aws_iam_user_policy_attachment" "seafile_service_account_s3_policy_attachment" {
   user       = aws_iam_user.seafile_service_account.name
   policy_arn = aws_iam_policy.seafile_service_account_s3_policy.arn
 }
 
-# Generate a key pair for the EC2 instance
+# Key Pair for EC2
 resource "tls_private_key" "seafile_key" {
   algorithm = "RSA"
   rsa_bits  = 4096
@@ -124,7 +104,6 @@ resource "aws_key_pair" "seafile_key_pair" {
   public_key = tls_private_key.seafile_key.public_key_openssh
 }
 
-# Store the private key in AWS SSM Parameter Store
 resource "aws_ssm_parameter" "seafile_private_key" {
   name        = "/seafile/ec2/keypair"
   description = "Private key for Seafile EC2 instance"
@@ -132,17 +111,16 @@ resource "aws_ssm_parameter" "seafile_private_key" {
   value       = tls_private_key.seafile_key.private_key_pem
 }
 
-# Store additional parameters in AWS SSM Parameter Store
+# SSM Parameters
 resource "aws_ssm_parameter" "seafile_additional_params" {
   for_each = local.seafile_parameters
-
-  name        = "/seafile/${each.key}"
+  name     = "/seafile/${each.key}"
   description = each.value.description
-  type        = "SecureString"
-  value       = each.value.value
+  type     = "SecureString"
+  value    = each.value.value
 }
 
-# Create the VPC
+# VPC
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "~> 5.0"
@@ -150,32 +128,27 @@ module "vpc" {
   name = "seafile-vpc"
   cidr = "10.0.0.0/16"
 
-  azs             = var.avz
-  public_subnets  = ["10.0.1.0/24"]
+  azs            = var.avz
+  public_subnets = var.public_subnets 
 
   enable_nat_gateway = false
   enable_vpn_gateway = false
 
-  tags = {
-    Name = "seafile-vpc"
-  }
+  tags = { Name = "seafile-vpc" }
 }
 
-# Create S3 buckets
+# S3 Buckets
 resource "aws_s3_bucket" "seafile_buckets" {
   for_each = local.seafile_buckets
-
-  bucket = "seafile-storage-bucket-${each.key}-${random_id.bucket_suffix.hex}"
-  tags = {
-    Name = each.value
-  }
+  bucket   = "seafile-storage-bucket-${each.key}-${random_id.bucket_suffix.hex}"
+  tags     = { Name = each.value }
 }
 
 resource "random_id" "bucket_suffix" {
   byte_length = 8
 }
 
-# Create a security group for the EC2 instance
+# Security Group
 resource "aws_security_group" "seafile_sg" {
   vpc_id = module.vpc.vpc_id
   ingress {
@@ -202,12 +175,10 @@ resource "aws_security_group" "seafile_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  tags = {
-    Name = "seafile-sg"
-  }
+  tags = { Name = "seafile-sg" }
 }
 
-# Create the EC2 instance
+# EC2 Instance 
 module "ec2" {
   source  = "terraform-aws-modules/ec2-instance/aws"
   version = "~> 5.0"
@@ -221,29 +192,113 @@ module "ec2" {
   iam_instance_profile   = aws_iam_instance_profile.seafile_instance_profile.name
   associate_public_ip_address = true
 
-  root_block_device = [
-    {
-      volume_size          = 300
-      volume_type          = "gp2"
-      delete_on_termination = true
-    }
-  ]
+  root_block_device = [{
+    volume_size           = 300
+    volume_type           = "gp2"
+    delete_on_termination = true
+  }]
 
-  tags = {
-    Name = "seafile-instance"
-  }
+  tags = { Name = "seafile-instance" }
 }
 
-# Create an Elastic IP
+# Elastic IP
 resource "aws_eip" "seafile_eip" {
   domain = "vpc"
-  tags = {
-    Name = "seafile-eip"
-  }
+  tags   = { Name = "seafile-eip" }
 }
 
-# Associate the Elastic IP with the EC2 instance
 resource "aws_eip_association" "seafile_eip_assoc" {
   instance_id   = module.ec2.id
   allocation_id = aws_eip.seafile_eip.id
+}
+
+
+# Lambda Role and Policy
+resource "aws_iam_role" "seafile_lambda_role" {
+  name = "SeafileLambdaExecutionRole"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "seafile_lambda_policy" {
+  name   = "SeafileLambdaPolicy"
+  role   = aws_iam_role.seafile_lambda_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
+        Resource = [
+          "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:*",
+          "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/${module.ec2.id}"
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:*"
+      }
+    ]
+  })
+}
+
+# Lambda Function
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "${path.module}/lambda_function.py"
+  output_path = "${path.module}/lambda.zip"
+}
+
+resource "aws_lambda_function" "seafile_lambda" {
+  filename      = data.archive_file.lambda_zip.output_path
+  function_name = "SetupEC2Lambda"
+  role          = aws_iam_role.seafile_lambda_role.arn
+  handler       = "lambda_function.lambda_handler"
+  runtime       = "python3.9"
+  timeout       = 300
+
+  environment {
+    variables = {
+      REGION         = var.region
+      EIP_PUBLIC_IP  = aws_eip.seafile_eip.public_ip
+      COMMIT_BUCKET  = aws_s3_bucket.seafile_buckets["commit"].id
+      FS_BUCKET      = aws_s3_bucket.seafile_buckets["fs"].id
+      BLOCK_BUCKET   = aws_s3_bucket.seafile_buckets["block"].id
+    }
+  }
+}
+
+# EventBridge Rule
+resource "aws_cloudwatch_event_rule" "seafile_setup" {
+  name        = "SeafileSetupRule"
+  description = "Trigger Lambda when EC2 instance starts"
+  event_pattern = jsonencode({
+    source      = ["aws.ec2"]
+    detail-type = ["EC2 Instance State-change Notification"]
+    detail      = {
+      state       = ["running"]
+      instance-id = [module.ec2.id]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "seafile_lambda_target" {
+  rule      = aws_cloudwatch_event_rule.seafile_setup.name
+  target_id = "SeafileLambda"
+  arn       = aws_lambda_function.seafile_lambda.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge" {
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.seafile_lambda.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.seafile_setup.arn
 }

@@ -24,10 +24,10 @@ jobs:
       uses: aws-actions/configure-aws-credentials@v4.1.0
       with:
         role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/TerraformExecutionRole
-        aws-region: ap-southeast-1
+        aws-region: ${{ secrets.AWS_REGION }}  # Updated to use secret
 
     - name: Terraform Init
-      run: terraform init
+      run: terraform init -backend-config="bucket=seafile-${{ secrets.AWS_REGION }}-${{ secrets.BACKEND_BUCKET_SUFFIX }}" -backend-config="key=seafile-terraform/terraform.tfstate" -backend-config="region=${{ secrets.AWS_REGION }}" -backend-config="dynamodb_table=${{ secrets.BACKEND_DYNAMODB_TABLE }}"
       working-directory: .
 
     - name: Terraform Destroy
