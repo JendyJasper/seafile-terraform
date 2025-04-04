@@ -33,9 +33,27 @@ jobs:
       working-directory: .
 
     - name: Terraform Plan
+      env:
+        TF_VAR_admin_ui_password: ${{ secrets.ADMIN_UI_PASSWORD }}
+        TF_VAR_admin_ui_username: ${{ secrets.ADMIN_UI_USERNAME }}
+        TF_VAR_db_username: ${{ secrets.DB_USERNAME }}
+        TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+        TF_VAR_mysql_username: ${{ secrets.MYSQL_USERNAME }}
+        TF_VAR_mysql_password: ${{ secrets.MYSQL_PASSWORD }}
+        TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
+        TF_VAR_docker_password: ${{ secrets.DOCKER_PASSWORD }}
       run: terraform plan
       working-directory: .
 
     - name: Terraform Apply
+      env:
+        TF_VAR_admin_ui_password: ${{ secrets.ADMIN_UI_PASSWORD }}
+        TF_VAR_admin_ui_username: ${{ secrets.ADMIN_UI_USERNAME }}
+        TF_VAR_db_username: ${{ secrets.DB_USERNAME }}
+        TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+        TF_VAR_mysql_username: ${{ secrets.MYSQL_USERNAME }}
+        TF_VAR_mysql_password: ${{ secrets.MYSQL_PASSWORD }}
+        TF_VAR_docker_username: ${{ secrets.DOCKER_USERNAME }}
+        TF_VAR_docker_password: ${{ secrets.DOCKER_PASSWORD }}
       run: terraform apply -auto-approve
       working-directory: .

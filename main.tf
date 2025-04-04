@@ -4,32 +4,32 @@ provider "aws" {
 
 terraform {
   backend "s3" {
-    bucket         = "terraform-state-seafile" 
+    bucket         = "terraform-state-seafile"
     key            = "seafile-terraform/terraform.tfstate"
     region         = "ap-southeast-1"
     dynamodb_table = "terraform-locks"
   }
 }
 
-# Get the current AWS account ID
-data "aws_caller_identity" "current" {}
-
-# Create an IAM policy for the EC2 instance to access S3
-resource "aws_iam_policy" "seafile_s3_access_policy" {
-  name        = "SeafileS3AccessPolicy"
-  description = "Policy for Seafile EC2 instance to access S3"
+# Create an IAM policy for S3 and full SSM access (for EC2 role)
+resource "aws_iam_policy" "seafile_s3_and_ssm_access_policy" {
+  name        = "SeafileS3AndSSMAccessPolicy"
+  description = "Policy for Seafile EC2 instance to access S3 and all SSM parameters under /seafile/*"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
         Effect = "Allow"
-        Action = [
-          "s3:*"
-        ]
+        Action = ["s3:*"]
         Resource = [
           "arn:aws:s3:::seafile-storage-bucket-*",
-          "arn:aws:s3:::seafile-storage-bucket-*/*",
+          "arn:aws:s3:::seafile-storage-bucket-*/*"
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = ["ssm:*"]
+        Resource = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/seafile/*"
       }
     ]
   })
@@ -52,16 +52,65 @@ resource "aws_iam_role" "seafile_ec2_role" {
   })
 }
 
-# Attach the policy to the role
-resource "aws_iam_role_policy_attachment" "seafile_s3_access_policy_attachment" {
+# Attach the S3 and SSM policy to the EC2 role
+resource "aws_iam_role_policy_attachment" "seafile_s3_and_ssm_access_policy_attachment" {
   role       = aws_iam_role.seafile_ec2_role.name
-  policy_arn = aws_iam_policy.seafile_s3_access_policy.arn
+  policy_arn = aws_iam_policy.seafile_s3_and_ssm_access_policy.arn
 }
 
 # Create an IAM instance profile for the EC2 instance
 resource "aws_iam_instance_profile" "seafile_instance_profile" {
   name = "seafile-instance-profile"
   role = aws_iam_role.seafile_ec2_role.name
+}
+
+# Create an IAM user for Seafile service account
+resource "aws_iam_user" "seafile_service_account" {
+  name = "seafile-service-account"
+  tags = {
+    Name = "Seafile Service Account"
+  }
+}
+
+# Create an access key for the IAM user
+resource "aws_iam_access_key" "seafile_service_account_key" {
+  user = aws_iam_user.seafile_service_account.name
+}
+
+# Store the access key and secret key in Parameter Store
+resource "aws_ssm_parameter" "seafile_iam_credentials" {
+  name        = "/seafile/iam_user/credentials"
+  description = "IAM credentials for Seafile service account"
+  type        = "SecureString"
+  value = jsonencode({
+    access_key_id     = aws_iam_access_key.seafile_service_account_key.id
+    secret_access_key = aws_iam_access_key.seafile_service_account_key.secret
+  })
+}
+
+# Create a new S3 policy for the service account
+resource "aws_iam_policy" "seafile_service_account_s3_policy" {
+  name        = "SeafileServiceAccountS3Policy"
+  description = "Policy for Seafile service account to access S3"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = ["s3:*"]
+        Resource = [
+          "arn:aws:s3:::seafile-storage-bucket-*",
+          "arn:aws:s3:::seafile-storage-bucket-*/*"
+        ]
+      }
+    ]
+  })
+}
+
+# Attach the new S3 policy to the service account
+resource "aws_iam_user_policy_attachment" "seafile_service_account_s3_policy_attachment" {
+  user       = aws_iam_user.seafile_service_account.name
+  policy_arn = aws_iam_policy.seafile_service_account_s3_policy.arn
 }
 
 # Generate a key pair for the EC2 instance
@@ -77,10 +126,20 @@ resource "aws_key_pair" "seafile_key_pair" {
 
 # Store the private key in AWS SSM Parameter Store
 resource "aws_ssm_parameter" "seafile_private_key" {
-  name        = "/seafile-key-pair"
+  name        = "/seafile/ec2/keypair"
   description = "Private key for Seafile EC2 instance"
   type        = "SecureString"
   value       = tls_private_key.seafile_key.private_key_pem
+}
+
+# Store additional parameters in AWS SSM Parameter Store
+resource "aws_ssm_parameter" "seafile_additional_params" {
+  for_each = local.seafile_parameters
+
+  name        = "/seafile/${each.key}"
+  description = each.value.description
+  type        = "SecureString"
+  value       = each.value.value
 }
 
 # Create the VPC
@@ -102,55 +161,18 @@ module "vpc" {
   }
 }
 
-# Create the S3 bucket which seafile will use
-module "s3-commit" {
-  source  = "terraform-aws-modules/s3-bucket/aws"
-  version = "~> 4.0"
+# Create S3 buckets
+resource "aws_s3_bucket" "seafile_buckets" {
+  for_each = local.seafile_buckets
 
-  bucket = "seafile-storage-bucket-commit${random_id.bucket_suffix.hex}"
+  bucket = "seafile-storage-bucket-${each.key}-${random_id.bucket_suffix.hex}"
   tags = {
-    Name = "Seafile Commit Objects"
-  }
-}
-
-module "s3-fs" {
-  source  = "terraform-aws-modules/s3-bucket/aws"
-  version = "~> 4.0"
-
-  bucket = "seafile-storage-bucket-fs-${random_id.bucket_suffix.hex}"
-  tags = {
-    Name = "Seafile FS Objects"
-  }
-}
-
-module "s3-block" {
-  source  = "terraform-aws-modules/s3-bucket/aws"
-  version = "~> 4.0"
-
-  bucket = "seafile-storage-bucket-block-${random_id.bucket_suffix.hex}"
-  tags = {
-    Name = "Seafile Block Objects"
+    Name = each.value
   }
 }
 
 resource "random_id" "bucket_suffix" {
   byte_length = 8
-}
-
-# Fetch the latest Amazon Linux 2 AMI so the code won't fail when the AMI becomes invalid
-data "aws_ami" "amazon_linux_2" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
 }
 
 # Create a security group for the EC2 instance
@@ -206,22 +228,6 @@ module "ec2" {
       delete_on_termination = true
     }
   ]
-
-  user_data = <<-EOF
-              #!/bin/bash
-              sudo yum update -y
-              sudo amazon-linux-extras install docker
-              sudo yum install docker
-              sudo service docker start
-              sudo systemctl enable docker
-              sudo usermod -a -G docker ec2-user
-              # Install Docker Compose
-              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-              sudo chmod +x /usr/local/bin/docker-compose
-
-              mkdir /opt/seafile
-              cd /opt/seafile
-              EOF
 
   tags = {
     Name = "seafile-instance"
