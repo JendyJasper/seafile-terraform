@@ -74,8 +74,8 @@ def lambda_handler(event, context):
     TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
     export AWS_METADATA_SERVICE_TOKEN=$TOKEN
 
-    # Install boto3 for AWS CLI commands
-    sudo pip3 install boto3 --user
+    # Install boto3 as ec2-user
+    sudo -u ec2-user pip3 install boto3 --user
 
     # Create directories
     sudo mkdir -p /opt/seafile /opt/seafile-data/seafile
@@ -86,14 +86,20 @@ def lambda_handler(event, context):
     AWS_ACCESS_KEY_ID=$(sudo jq -r .access_key_id creds.json)
     AWS_SECRET_ACCESS_KEY=$(sudo jq -r .secret_access_key creds.json)
 
-    # Log in to Docker Hub
-    sudo aws ssm get-parameter --name "/seafile/docker/password" --with-decryption --region {region} --query Parameter.Value --output text | sudo docker login --username "$(aws ssm get-parameter --name /seafile/docker/username --with-decryption --region {region} --query Parameter.Value --output text)" --password-stdin
+    # Log in to the correct Docker registry (docker.seadrive.org)
+    echo "Attempting login to docker.seadrive.org..."
+    if aws ssm get-parameter --name /seafile/docker/password --with-decryption --region {region} --query Parameter.Value --output text | sudo docker login docker.seadrive.org --username "$(aws ssm get-parameter --name /seafile/docker/username --with-decryption --region {region} --query Parameter.Value --output text)" --password-stdin; then
+        echo "Login to docker.seadrive.org successful"
+    else
+        echo "Login to docker.seadrive.org failed"
+        exit 1
+    fi
 
     # Download docker-compose.yml
     sudo wget -O "docker-compose.yml" "https://manual.seafile.com/11.0/docker/docker-compose/pro/11.0/docker-compose.yml"
 
     # Verify the downloaded docker-compose.yml syntax
-    docker-compose -f docker-compose.yml config || (echo "Invalid docker-compose.yml syntax" && exit 1)
+    sudo docker-compose -f docker-compose.yml config || (echo "Invalid docker-compose.yml syntax" && exit 1)
 
     # Update environment variables in docker-compose.yml
     sudo sed -i 's/- MYSQL_ROOT_PASSWORD=db_dev/- MYSQL_ROOT_PASSWORD=$(aws ssm get-parameter --name \/seafile\/mysql\/password --with-decryption --region {region} --query Parameter.Value --output text | tr -d "\\n")/g' docker-compose.yml
@@ -136,6 +142,7 @@ def lambda_handler(event, context):
     sudo echo 'use-sigv4 = True' >> ~/.boto
     sudo echo 'host = s3.{region}.amazonaws.com' >> ~/.boto
 
+    #477a70d8-70e9-4e6b-9c7e-7e7f9c7e7e7f
     # Restart services
     sudo docker-compose restart seafile
     sudo docker-compose restart redis
