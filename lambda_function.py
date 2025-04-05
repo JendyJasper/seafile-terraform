@@ -64,6 +64,8 @@ def lambda_handler(event, context):
     # Install Docker Compose
     sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
     sudo chmod +x /usr/local/bin/docker-compose
+    # Remove existing docker-compose link if it exists, then create a new one
+    [ -e /usr/bin/docker-compose ] && sudo rm -f /usr/bin/docker-compose
     sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
 
     # System configuration
@@ -133,24 +135,24 @@ def lambda_handler(event, context):
     sudo docker-compose up -d
 
     # Ensure seafile.conf exists before appending configurations
-    sudo docker exec seafile sh -c "[ -f /opt/seafile-data/seafile/seafile.conf ] || touch /opt/seafile-data/seafile/seafile.conf"
+    sudo docker exec seafile sh -c "[ -f /opt/seafile/conf/seafile.conf ] || touch /opt/seafile/conf/seafile.conf"
 
     # Configure Seafile for S3 and Redis
-    sudo docker exec seafile sh -c "if ! grep -q '[commit_object_backend]' /opt/seafile-data/seafile/seafile.conf; then echo '[commit_object_backend]' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'name = s3' /opt/seafile-data/seafile/seafile.conf; then echo 'name = s3' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'bucket = {commit_bucket}' /opt/seafile-data/seafile/seafile.conf; then echo 'bucket = {commit_bucket}' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'key_id = ' /opt/seafile-data/seafile/seafile.conf; then echo 'key_id = $AWS_ACCESS_KEY_ID' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'key = ' /opt/seafile-data/seafile/seafile.conf; then echo 'key = $AWS_SECRET_ACCESS_KEY' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'use_v4_signature = true' /opt/seafile-data/seafile/seafile.conf; then echo 'use_v4_signature = true' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'aws_region = {region}' /opt/seafile-data/seafile/seafile.conf; then echo 'aws_region = {region}' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q '[fs_object_backend]' /opt/seafile-data/seafile/seafile.conf; then echo '[fs_object_backend]' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'bucket = {fs_bucket}' /opt/seafile-data/seafile/seafile.conf; then echo 'bucket = {fs_bucket}' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q '[block_backend]' /opt/seafile-data/seafile/seafile.conf; then echo '[block_backend]' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'bucket = {block_bucket}' /opt/seafile-data/seafile/seafile.conf; then echo 'bucket = {block_bucket}' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q '[redis]' /opt/seafile-data/seafile/seafile.conf; then echo '[redis]' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'redis_host = redis' /opt/seafile-data/seafile/seafile.conf; then echo 'redis_host = redis' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'redis_port = 6379' /opt/seafile-data/seafile/seafile.conf; then echo 'redis_port = 6379' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'max_connections = 100' /opt/seafile-data/seafile/seafile.conf; then echo 'max_connections = 100' >> /opt/seafile-data/seafile/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q '[commit_object_backend]' /opt/seafile/conf/seafile.conf; then echo '[commit_object_backend]' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'name = s3' /opt/seafile/conf/seafile.conf; then echo 'name = s3' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'bucket = {commit_bucket}' /opt/seafile/conf/seafile.conf; then echo 'bucket = {commit_bucket}' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'key_id = ' /opt/seafile/conf/seafile.conf; then echo 'key_id = $AWS_ACCESS_KEY_ID' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'key = ' /opt/seafile/conf/seafile.conf; then echo 'key = $AWS_SECRET_ACCESS_KEY' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'use_v4_signature = true' /opt/seafile/conf/seafile.conf; then echo 'use_v4_signature = true' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'aws_region = {region}' /opt/seafile/conf/seafile.conf; then echo 'aws_region = {region}' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q '[fs_object_backend]' /opt/seafile/conf/seafile.conf; then echo '[fs_object_backend]' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'bucket = {fs_bucket}' /opt/seafile/conf/seafile.conf; then echo 'bucket = {fs_bucket}' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q '[block_backend]' /opt/seafile/conf/seafile.conf; then echo '[block_backend]' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'bucket = {block_bucket}' /opt/seafile/conf/seafile.conf; then echo 'bucket = {block_bucket}' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q '[redis]' /opt/seafile/conf/seafile.conf; then echo '[redis]' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'redis_host = redis' /opt/seafile/conf/seafile.conf; then echo 'redis_host = redis' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'redis_port = 6379' /opt/seafile/conf/seafile.conf; then echo 'redis_port = 6379' >> /opt/seafile/conf/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'max_connections = 100' /opt/seafile/conf/seafile.conf; then echo 'max_connections = 100' >> /opt/seafile/conf/seafile.conf; fi"
 
     # Configure boto for S3
     sudo echo '[s3]' > ~/.boto
