@@ -302,10 +302,7 @@ module "ec2" {
     Name         = "seafile-instance"
     SetupPending = "true"
   }
-  depends_on = [
-    aws_lambda_function.seafile_lambda,
-    aws_cloudwatch_event_target.seafile_lambda_target
-  ]
+  depends_on = [aws_cloudwatch_event_target.seafile_lambda_target]
 }
 
 # Elastic IP
