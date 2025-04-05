@@ -152,8 +152,8 @@ def lambda_handler(event, context):
     """
 
     # Retry sending SSM command if instance isn't ready
-    max_attempts = 5
-    retry_interval = 30  # Wait 30 seconds between retries
+    max_attempts = 10
+    retry_interval = 45  # Wait 45 seconds between retries
     for attempt in range(max_attempts):
         try:
             logger.info(f"Sending SSM command to instance {instance_id} (attempt {attempt + 1}/{max_attempts})")
