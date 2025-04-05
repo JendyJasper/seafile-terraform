@@ -50,6 +50,11 @@ resource "aws_iam_role_policy_attachment" "seafile_s3_and_ssm_access_policy_atta
   policy_arn = aws_iam_policy.seafile_s3_and_ssm_access_policy.arn
 }
 
+resource "aws_iam_role_policy_attachment" "ssm_managed_instance" {
+  role       = aws_iam_role.seafile_ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_instance_profile" "seafile_instance_profile" {
   name = "seafile-instance-profile"
   role = aws_iam_role.seafile_ec2_role.name
@@ -113,11 +118,11 @@ resource "aws_ssm_parameter" "seafile_private_key" {
 
 # SSM Parameters
 resource "aws_ssm_parameter" "seafile_additional_params" {
-  for_each = local.seafile_parameters
-  name     = "/seafile/${each.key}"
+  for_each    = local.seafile_parameters
+  name        = "/seafile/${each.key}"
   description = each.value.description
-  type     = "SecureString"
-  value    = each.value.value
+  type        = "SecureString"
+  value       = each.value.value
 }
 
 # VPC
@@ -129,7 +134,7 @@ module "vpc" {
   cidr = "10.0.0.0/16"
 
   azs            = var.avz
-  public_subnets = var.public_subnets 
+  public_subnets = var.public_subnets
 
   enable_nat_gateway = false
   enable_vpn_gateway = false
@@ -199,10 +204,10 @@ resource "aws_iam_role_policy" "seafile_lambda_policy" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = ["ssm:*"]
+        Action   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
         Resource = [
           "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:*",
-          "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/${module.ec2.id}"
+          "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"
         ]
       },
       {
@@ -212,13 +217,13 @@ resource "aws_iam_role_policy" "seafile_lambda_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["events:*"]
+        Action   = ["events:DisableRule"]
         Resource = "arn:aws:events:${var.region}:${data.aws_caller_identity.current.account_id}:rule/SeafileSetupRule"
       },
       {
         Effect   = "Allow"
-        Action   = ["ec2:*"]
-        Resource = "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/${module.ec2.id}"
+        Action   = ["ec2:CreateTags"]
+        Resource = "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"
       }
     ]
   })
@@ -241,11 +246,11 @@ resource "aws_lambda_function" "seafile_lambda" {
 
   environment {
     variables = {
-      REGION         = var.region
-      EIP_PUBLIC_IP  = aws_eip.seafile_eip.public_ip
-      COMMIT_BUCKET  = aws_s3_bucket.seafile_buckets["commit"].id
-      FS_BUCKET      = aws_s3_bucket.seafile_buckets["fs"].id
-      BLOCK_BUCKET   = aws_s3_bucket.seafile_buckets["block"].id
+      REGION        = var.region
+      EIP_PUBLIC_IP = aws_eip.seafile_eip.public_ip
+      COMMIT_BUCKET = aws_s3_bucket.seafile_buckets["commit"].id
+      FS_BUCKET     = aws_s3_bucket.seafile_buckets["fs"].id
+      BLOCK_BUCKET  = aws_s3_bucket.seafile_buckets["block"].id
     }
   }
   depends_on = [aws_iam_role_policy.seafile_lambda_policy]
@@ -258,9 +263,8 @@ resource "aws_cloudwatch_event_rule" "seafile_setup" {
   event_pattern = jsonencode({
     source      = ["aws.ec2"]
     detail-type = ["EC2 Instance State-change Notification"]
-    detail      = {
-      state       = ["running"]
-      instance-id = [module.ec2.id]
+    detail = {
+      state = ["running"]
       "tag.SetupPending" = ["true"]
     }
   })
