@@ -206,8 +206,8 @@ resource "aws_iam_role_policy" "seafile_lambda_policy" {
         Effect   = "Allow"
         Action   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
         Resource = [
-          "arn:aws:ssm:*",
-          "arn:aws:ec2:*"
+          "*",
+          "*"
         ]
       },
       {
