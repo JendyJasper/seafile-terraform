@@ -222,7 +222,7 @@ resource "aws_iam_role_policy" "seafile_lambda_policy" {
       },
       {
         Effect   = "Allow"
-        Action   = ["ec2:CreateTags"]
+        Action   = ["ec2:*"]
         Resource = "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"
       }
     ]
