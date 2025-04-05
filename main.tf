@@ -259,13 +259,12 @@ resource "aws_lambda_function" "seafile_lambda" {
 # EventBridge Rule 
 resource "aws_cloudwatch_event_rule" "seafile_setup" {
   name        = "SeafileSetupRule"
-  description = "Trigger Lambda when EC2 instance starts with SetupPending tag"
+  description = "Trigger Lambda when any EC2 instance starts"
   event_pattern = jsonencode({
     source      = ["aws.ec2"]
     detail-type = ["EC2 Instance State-change Notification"]
     detail = {
       state = ["running"]
-      "tag.SetupPending" = ["true"]
     }
   })
 }

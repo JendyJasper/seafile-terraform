@@ -22,10 +22,26 @@ def lambda_handler(event, context):
         raise ValueError(f"Missing required environment variables: {missing}")
 
     ssm = boto3.client('ssm', region_name=region)
-    events = boto3.client('events', region_name=region)
-    ec2 = boto3.client('ec2', region_name=region)  # Add EC2 client for tagging
+    ec2 = boto3.client('ec2', region_name=region)
     instance_id = event['detail']['instance-id']
+
+    # Check if the instance has the SetupPending=true tag
+    tags = ec2.describe_tags(
+        Filters=[
+            {"Name": "resource-id", "Values": [instance_id]},
+            {"Name": "key", "Values": ["SetupPending"]},
+            {"Name": "value", "Values": ["true"]}
+        ]
+    )['Tags']
     
+    if not tags:
+        print(f"Instance {instance_id} does not have SetupPending=true tag. Skipping.")
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Instance not targeted for setup')
+        }
+
+    # SSM command with retry logic
     script = f"""
     #!/bin/bash
     sudo yum update -y
@@ -80,16 +96,29 @@ def lambda_handler(event, context):
     sudo docker-compose restart redis
     sudo docker-compose ps | grep seafile | grep Up || (echo "Seafile failed to start" && exit 1)
     """
-    
-    response = ssm.send_command(
-        InstanceIds=[instance_id],
-        DocumentName='AWS-RunShellScript',
-        Parameters={'commands': [script]},
-        TimeoutSeconds=600
-    )
-    
-    command_id = response['Command']['CommandId']
-    time.sleep(10)
+
+    # Retry sending SSM command if instance isn't ready
+    max_attempts = 5
+    retry_interval = 30  # Wait 30 seconds between retries
+    for attempt in range(max_attempts):
+        try:
+            response = ssm.send_command(
+                InstanceIds=[instance_id],
+                DocumentName='AWS-RunShellScript',
+                Parameters={'commands': [script]},
+                TimeoutSeconds=600
+            )
+            command_id = response['Command']['CommandId']
+            break  # Exit loop if command is sent successfully
+        except ssm.exceptions.InvalidInstanceId:
+            if attempt < max_attempts - 1:
+                print(f"Instance {instance_id} not ready for SSM (attempt {attempt + 1}/{max_attempts}). Retrying in {retry_interval} seconds...")
+                time.sleep(retry_interval)
+            else:
+                raise Exception(f"Failed to send SSM command to {instance_id} after {max_attempts} attempts: Instance not ready")
+
+    # Wait for command execution result
+    time.sleep(10)  # Initial wait before checking status
     result = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
 
     max_wait = 300
@@ -105,8 +134,6 @@ def lambda_handler(event, context):
             Resources=[instance_id],
             Tags=[{'Key': 'SetupPending', 'Value': 'false'}]
         )
-        # Disable the EventBridge rule as a fallback
-        events.disable_rule(Name='SeafileSetupRule')
         return {
             'statusCode': 200,
             'body': json.dumps('Setup completed and tag updated')
