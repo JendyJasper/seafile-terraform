@@ -115,6 +115,11 @@ def lambda_handler(event, context):
     sudo sed -i "s/SEAFILE_ADMIN_PASSWORD=asecret/SEAFILE_ADMIN_PASSWORD=$ADMIN_PASSWORD/g" docker-compose.yml
     sudo sed -i "s/SEAFILE_SERVER_HOSTNAME=example.seafile.com/SEAFILE_SERVER_HOSTNAME={eip_public_ip}/g" docker-compose.yml
 
+    # Add NON_ROOT=true to the seafile service's environment
+    if ! grep -A 10 'seafile:' docker-compose.yml | grep -q 'NON_ROOT=true'; then
+        sudo sed -i '/environment:/a \      - NON_ROOT=true' docker-compose.yml
+    fi
+
     # Check if redis service already exists; if not, add it before the top-level networks: section
     if ! grep -q 'redis:' docker-compose.yml; then
         sudo sed -i '/^networks:/i \  redis:\\n    image: redis:6\\n    container_name: seafile-redis\\n    networks:\\n      - seafile-net' docker-compose.yml
@@ -128,8 +133,8 @@ def lambda_handler(event, context):
     # Verify the updated docker-compose.yml syntax
     sudo docker-compose -f docker-compose.yml config || (echo "Invalid docker-compose.yml syntax" && exit 1)
 
-    # Set permissions
-    sudo chown -R 1000:1000 /opt/seafile-data
+    # Set permissions for /opt/seafile-data/seafile/ as per documentation (Seafile 11.0.7+)
+    sudo chmod -R a+rwx /opt/seafile-data/seafile/
 
     # Deploy Seafile
     sudo docker-compose up -d
@@ -192,9 +197,9 @@ def lambda_handler(event, context):
     sudo echo 'use-sigv4 = True' >> ~/.boto
     sudo echo 'host = s3.{region}.amazonaws.com' >> ~/.boto
 
-    # Restart services
-    sudo docker-compose restart seafile
-    sudo docker-compose restart redis
+    # Restart services to apply NON_ROOT=true
+    sudo docker-compose down
+    sudo docker-compose up -d
 
     # Verify Seafile is running
     sudo docker-compose ps | grep seafile | grep Up || (echo "Seafile failed to start" && exit 1)
