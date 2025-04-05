@@ -2,6 +2,11 @@ import boto3
 import json
 import time
 import os
+import logging
+
+# Set up logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 def lambda_handler(event, context):
     # Retrieve environment variables with validation
@@ -22,8 +27,28 @@ def lambda_handler(event, context):
         raise ValueError(f"Missing required environment variables: {missing}")
 
     ssm = boto3.client('ssm', region_name=region)
+    ec2 = boto3.client('ec2', region_name=region)
     instance_id = event['detail']['instance-id']
+
+    # Check if the instance has the SetupPending=true tag
+    tags = ec2.describe_tags(
+        Filters=[
+            {"Name": "resource-id", "Values": [instance_id]},
+            {"Name": "key", "Values": ["SetupPending"]},
+            {"Name": "value", "Values": ["true"]}
+        ]
+    )['Tags']
     
+    if not tags:
+        logger.info(f"Instance {instance_id} does not have SetupPending=true tag. Skipping.")
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Instance not targeted for setup')
+        }
+
+    logger.info(f"Starting setup for instance {instance_id}")
+
+    # SSM command with retry logic
     script = f"""
     #!/bin/bash
     sudo yum update -y
@@ -78,18 +103,48 @@ def lambda_handler(event, context):
     sudo docker-compose restart redis
     sudo docker-compose ps | grep seafile | grep Up || (echo "Seafile failed to start" && exit 1)
     """
-    
-    response = ssm.send_command(
-        InstanceIds=[instance_id],
-        DocumentName='AWS-RunShellScript',
-        Parameters={'commands': [script]},
-        TimeoutSeconds=600
-    )
-    
-    command_id = response['Command']['CommandId']
-    time.sleep(10)
+
+    # Retry sending SSM command if instance isn't ready
+    max_attempts = 5
+    retry_interval = 30  # Wait 30 seconds between retries
+    for attempt in range(max_attempts):
+        try:
+            response = ssm.send_command(
+                InstanceIds=[instance_id],
+                DocumentName='AWS-RunShellScript',
+                Parameters={'commands': [script]},
+                TimeoutSeconds=600
+            )
+            command_id = response['Command']['CommandId']
+            break  # Exit loop if command is sent successfully
+        except ssm.exceptions.InvalidInstanceId:
+            if attempt < max_attempts - 1:
+                logger.info(f"Instance {instance_id} not ready for SSM (attempt {attempt + 1}/{max_attempts}). Retrying in {retry_interval} seconds...")
+                time.sleep(retry_interval)
+            else:
+                raise Exception(f"Failed to send SSM command to {instance_id} after {max_attempts} attempts: Instance not ready")
+
+    # Wait for command execution result
+    time.sleep(10)  # Initial wait before checking status
     result = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
-    return {
-        'statusCode': 200,
-        'body': json.dumps(result)
-    }
+
+    max_wait = 300
+    waited = 10
+    while result['Status'] in ['Pending', 'InProgress'] and waited < max_wait:
+        time.sleep(10)
+        result = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+        waited += 10
+
+    if result['Status'] == 'Success':
+        # Update tag to prevent re-triggering
+        ec2.create_tags(
+            Resources=[instance_id],
+            Tags=[{'Key': 'SetupPending', 'Value': 'false'}]
+        )
+        logger.info(f"Setup completed for instance {instance_id}, tag updated to SetupPending=false")
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Setup completed and tag updated')
+        }
+    else:
+        raise Exception(f"Command failed with status {result['Status']}: {result.get('StandardErrorContent', 'No error details')}")
