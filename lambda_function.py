@@ -113,14 +113,18 @@ def lambda_handler(event, context):
     sudo sed -i "s/SEAFILE_ADMIN_PASSWORD=asecret/SEAFILE_ADMIN_PASSWORD=$ADMIN_PASSWORD/g" docker-compose.yml
     sudo sed -i "s/SEAFILE_SERVER_HOSTNAME=example.seafile.com/SEAFILE_SERVER_HOSTNAME={eip_public_ip}/g" docker-compose.yml
 
+    # Check if redis service already exists; if not, add it before the top-level networks: section
+    if ! grep -q 'redis:' docker-compose.yml; then
+        sudo sed -i '/^networks:/i \  redis:\\n    image: redis:6\\n    container_name: seafile-redis\\n    networks:\\n      - seafile-net' docker-compose.yml
+    fi
+
+    # Add redis to seafile service's depends_on if not already present
+    if ! grep -A 5 'depends_on:' docker-compose.yml | grep -q 'redis'; then
+        sudo sed -i '/depends_on:/a \      - redis' docker-compose.yml
+    fi
+
     # Verify the updated docker-compose.yml syntax
     sudo docker-compose -f docker-compose.yml config || (echo "Invalid docker-compose.yml syntax" && exit 1)
-
-    # Add redis service to docker-compose.yml
-    sudo sed -i '/networks:/i \  redis:\\n    image: redis:6\\n    container_name: seafile-redis\\n    networks:\\n      - seafile-net' docker-compose.yml
-
-    # Add redis to seafile service's depends_on
-    sudo sed -i '/depends_on:/a \      - redis' docker-compose.yml
 
     # Set permissions
     sudo chown -R 1000:1000 /opt/seafile-data
