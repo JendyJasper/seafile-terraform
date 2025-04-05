@@ -199,21 +199,26 @@ resource "aws_iam_role_policy" "seafile_lambda_policy" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
+        Action   = ["ssm:*"]
         Resource = [
           "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:*",
-          "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"  # Broader scope for future instances
+          "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/${module.ec2.id}"
         ]
       },
       {
         Effect   = "Allow"
-        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Action   = ["logs:*"]
         Resource = "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:*"
       },
       {
         Effect   = "Allow"
-        Action   = ["events:*"]  # Adjusted to specific action needed
+        Action   = ["events:*"]
         Resource = "arn:aws:events:${var.region}:${data.aws_caller_identity.current.account_id}:rule/SeafileSetupRule"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["ec2:*"]
+        Resource = "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/${module.ec2.id}"
       }
     ]
   })
@@ -232,7 +237,7 @@ resource "aws_lambda_function" "seafile_lambda" {
   role          = aws_iam_role.seafile_lambda_role.arn
   handler       = "lambda_function.lambda_handler"
   runtime       = "python3.9"
-  timeout       = 600  # Increased to match SSM timeout
+  timeout       = 600
 
   environment {
     variables = {
@@ -243,19 +248,20 @@ resource "aws_lambda_function" "seafile_lambda" {
       BLOCK_BUCKET   = aws_s3_bucket.seafile_buckets["block"].id
     }
   }
-  depends_on = [aws_iam_role_policy.seafile_lambda_policy]  # Ensure policy is attached
+  depends_on = [aws_iam_role_policy.seafile_lambda_policy]
 }
 
-# EventBridge Rule
+# EventBridge Rule 
 resource "aws_cloudwatch_event_rule" "seafile_setup" {
   name        = "SeafileSetupRule"
-  description = "Trigger Lambda when EC2 instance starts"
+  description = "Trigger Lambda when EC2 instance starts with SetupPending tag"
   event_pattern = jsonencode({
     source      = ["aws.ec2"]
     detail-type = ["EC2 Instance State-change Notification"]
     detail      = {
       state       = ["running"]
       instance-id = [module.ec2.id]
+      "tag.SetupPending" = ["true"]
     }
   })
 }
@@ -274,7 +280,7 @@ resource "aws_cloudwatch_event_target" "seafile_lambda_target" {
   arn       = aws_lambda_function.seafile_lambda.arn
 }
 
-# EC2 Instance (Moved after Lambda to enforce dependency)
+# EC2 Instance 
 module "ec2" {
   source  = "terraform-aws-modules/ec2-instance/aws"
   version = "~> 5.0"
@@ -294,13 +300,15 @@ module "ec2" {
     delete_on_termination = true
   }]
 
-  tags = { Name = "seafile-instance" }
+  tags = {
+    Name         = "seafile-instance"
+    SetupPending = "true"
+  }
 
   depends_on = [
     aws_lambda_function.seafile_lambda,
-    aws_lambda_permission.allow_eventbridge,
-    aws_cloudwatch_event_rule.seafile_setup
-  ]  # Ensure Lambda is ready before EC2 creation
+    aws_lambda_permission.allow_eventbridge
+  ]
 }
 
 # Elastic IP

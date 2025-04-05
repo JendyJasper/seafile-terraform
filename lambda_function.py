@@ -22,7 +22,8 @@ def lambda_handler(event, context):
         raise ValueError(f"Missing required environment variables: {missing}")
 
     ssm = boto3.client('ssm', region_name=region)
-    events = boto3.client('events', region_name=region)  # Add Events client for disabling the rule
+    events = boto3.client('events', region_name=region)
+    ec2 = boto3.client('ec2', region_name=region)  # Add EC2 client for tagging
     instance_id = event['detail']['instance-id']
     
     script = f"""
@@ -88,10 +89,9 @@ def lambda_handler(event, context):
     )
     
     command_id = response['Command']['CommandId']
-    time.sleep(10)  # Initial wait
+    time.sleep(10)
     result = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
 
-    # Wait for command to complete (up to 5 minutes)
     max_wait = 300
     waited = 10
     while result['Status'] in ['Pending', 'InProgress'] and waited < max_wait:
@@ -100,11 +100,16 @@ def lambda_handler(event, context):
         waited += 10
 
     if result['Status'] == 'Success':
-        # Disable the EventBridge rule after successful execution
+        # Update tag to prevent re-triggering
+        ec2.create_tags(
+            Resources=[instance_id],
+            Tags=[{'Key': 'SetupPending', 'Value': 'false'}]
+        )
+        # Disable the EventBridge rule as a fallback
         events.disable_rule(Name='SeafileSetupRule')
         return {
             'statusCode': 200,
-            'body': json.dumps('Setup completed and EventBridge rule disabled')
+            'body': json.dumps('Setup completed and tag updated')
         }
     else:
         raise Exception(f"Command failed with status {result['Status']}: {result.get('StandardErrorContent', 'No error details')}")
