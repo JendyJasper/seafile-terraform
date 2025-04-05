@@ -31,6 +31,7 @@ def lambda_handler(event, context):
     instance_id = event['detail']['instance-id']
 
     # Check if the instance has the SetupPending=true tag
+    logger.info(f"Checking tags for instance {instance_id} in region {region}")
     tags = ec2.describe_tags(
         Filters=[
             {"Name": "resource-id", "Values": [instance_id]},
@@ -51,36 +52,69 @@ def lambda_handler(event, context):
     # SSM command with retry logic
     script = f"""
     #!/bin/bash
+    set -e  # Exit on any error
+
+    # Install dependencies
     sudo yum update -y
     sudo yum install -y docker jq openssl python3-pip
     sudo systemctl start docker
     sudo systemctl enable docker
     sudo usermod -aG docker ec2-user
-    sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+
+    # Install Docker Compose
+    sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
     sudo chmod +x /usr/local/bin/docker-compose
     sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+
+    # System configuration
     sudo echo "fs.file-max=100000" >> /etc/sysctl.conf
     sudo sysctl -p
+
+    # Set up AWS metadata token
     TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
     export AWS_METADATA_SERVICE_TOKEN=$TOKEN
-    sudo pip3 install boto3
-    sudo mkdir -p /opt/seafile
+
+    # Install boto3 for AWS CLI commands
+    sudo pip3 install boto3 --user
+
+    # Create directories
+    sudo mkdir -p /opt/seafile /opt/seafile-data/seafile
     cd /opt/seafile
+
+    # Retrieve IAM user credentials for S3 access
     sudo aws ssm get-parameter --name "/seafile/iam_user/credentials" --with-decryption --region {region} --query Parameter.Value --output text > creds.json
     AWS_ACCESS_KEY_ID=$(sudo jq -r .access_key_id creds.json)
     AWS_SECRET_ACCESS_KEY=$(sudo jq -r .secret_access_key creds.json)
-    sudo docker login -u "$(aws ssm get-parameter --name /seafile/docker/username --with-decryption --region {region} --query Parameter.Value --output text)" \
-                      -p "$(aws ssm get-parameter --name /seafile/docker/password --with-decryption --region {region} --query Parameter.Value --output text)"
+
+    # Log in to Docker Hub
+    sudo aws ssm get-parameter --name "/seafile/docker/password" --with-decryption --region {region} --query Parameter.Value --output text | sudo docker login --username "$(aws ssm get-parameter --name /seafile/docker/username --with-decryption --region {region} --query Parameter.Value --output text)" --password-stdin
+
+    # Download docker-compose.yml
     sudo wget -O "docker-compose.yml" "https://manual.seafile.com/11.0/docker/docker-compose/pro/11.0/docker-compose.yml"
+
+    # Verify the downloaded docker-compose.yml syntax
+    docker-compose -f docker-compose.yml config || (echo "Invalid docker-compose.yml syntax" && exit 1)
+
+    # Update environment variables in docker-compose.yml
     sudo sed -i 's/- MYSQL_ROOT_PASSWORD=db_dev/- MYSQL_ROOT_PASSWORD=$(aws ssm get-parameter --name \/seafile\/mysql\/password --with-decryption --region {region} --query Parameter.Value --output text | tr -d "\\n")/g' docker-compose.yml
     sudo sed -i 's/- DB_ROOT_PASSWD=db_dev/- DB_ROOT_PASSWD=$(aws ssm get-parameter --name \/seafile\/db\/password --with-decryption --region {region} --query Parameter.Value --output text | tr -d "\\n")/g' docker-compose.yml
     sudo sed -i 's/- SEAFILE_ADMIN_EMAIL=me@example.com/- SEAFILE_ADMIN_EMAIL=$(aws ssm get-parameter --name \/seafile\/admin_ui_login\/username --with-decryption --region {region} --query Parameter.Value --output text | tr -d "\\n")/g' docker-compose.yml
     sudo sed -i 's/- SEAFILE_ADMIN_PASSWORD=asecret/- SEAFILE_ADMIN_PASSWORD=$(aws ssm get-parameter --name \/seafile\/admin_ui_login\/password --with-decryption --region {region} --query Parameter.Value --output text | tr -d "\\n")/g' docker-compose.yml
     sudo sed -i 's/- SEAFILE_SERVER_HOSTNAME=example.seafile.com/- SEAFILE_SERVER_HOSTNAME={eip_public_ip}/g' docker-compose.yml
+
+    # Add redis service to docker-compose.yml
     sudo sed -i '/networks:/i \  redis:\\n    image: redis:6\\n    container_name: seafile-redis\\n    networks:\\n      - seafile-net' docker-compose.yml
-    sudo mkdir -p /opt/seafile-data/seafile
+
+    # Add redis to seafile service's depends_on
+    sudo sed -i '/depends_on:/a \      - redis' docker-compose.yml
+
+    # Set permissions
     sudo chown -R 1000:1000 /opt/seafile-data
+
+    # Deploy Seafile
     sudo docker-compose up -d
+
+    # Configure Seafile for S3 and Redis
     sudo docker exec seafile sh -c "if ! grep -q '[commit_object_backend]' /opt/seafile-data/seafile/seafile.conf; then echo '[commit_object_backend]' >> /opt/seafile-data/seafile/seafile.conf; fi"
     sudo docker exec seafile sh -c "if ! grep -q 'name = s3' /opt/seafile-data/seafile/seafile.conf; then echo 'name = s3' >> /opt/seafile-data/seafile/seafile.conf; fi"
     sudo docker exec seafile sh -c "if ! grep -q 'bucket = {commit_bucket}' /opt/seafile-data/seafile/seafile.conf; then echo 'bucket = {commit_bucket}' >> /opt/seafile-data/seafile/seafile.conf; fi"
@@ -96,11 +130,17 @@ def lambda_handler(event, context):
     sudo docker exec seafile sh -c "if ! grep -q 'redis_host = redis' /opt/seafile-data/seafile/seafile.conf; then echo 'redis_host = redis' >> /opt/seafile-data/seafile/seafile.conf; fi"
     sudo docker exec seafile sh -c "if ! grep -q 'redis_port = 6379' /opt/seafile-data/seafile/seafile.conf; then echo 'redis_port = 6379' >> /opt/seafile-data/seafile/seafile.conf; fi"
     sudo docker exec seafile sh -c "if ! grep -q 'max_connections = 100' /opt/seafile-data/seafile/seafile.conf; then echo 'max_connections = 100' >> /opt/seafile-data/seafile/seafile.conf; fi"
+
+    # Configure boto for S3
     sudo echo '[s3]' > ~/.boto
     sudo echo 'use-sigv4 = True' >> ~/.boto
     sudo echo 'host = s3.{region}.amazonaws.com' >> ~/.boto
+
+    # Restart services
     sudo docker-compose restart seafile
     sudo docker-compose restart redis
+
+    # Verify Seafile is running
     sudo docker-compose ps | grep seafile | grep Up || (echo "Seafile failed to start" && exit 1)
     """
 
@@ -109,6 +149,7 @@ def lambda_handler(event, context):
     retry_interval = 30  # Wait 30 seconds between retries
     for attempt in range(max_attempts):
         try:
+            logger.info(f"Sending SSM command to instance {instance_id} (attempt {attempt + 1}/{max_attempts})")
             response = ssm.send_command(
                 InstanceIds=[instance_id],
                 DocumentName='AWS-RunShellScript',
@@ -128,15 +169,17 @@ def lambda_handler(event, context):
     time.sleep(10)  # Initial wait before checking status
     result = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
 
-    max_wait = 300
+    max_wait = 600  # 10 minutes to account for Docker pull and setup
     waited = 10
     while result['Status'] in ['Pending', 'InProgress'] and waited < max_wait:
+        logger.info(f"SSM command {command_id} status: {result['Status']}, waited {waited}/{max_wait} seconds")
         time.sleep(10)
         result = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
         waited += 10
 
     if result['Status'] == 'Success':
         # Update tag to prevent re-triggering
+        logger.info(f"Tagging instance {instance_id} as setup complete")
         ec2.create_tags(
             Resources=[instance_id],
             Tags=[{'Key': 'SetupPending', 'Value': 'false'}]
@@ -147,4 +190,6 @@ def lambda_handler(event, context):
             'body': json.dumps('Setup completed and tag updated')
         }
     else:
-        raise Exception(f"Command failed with status {result['Status']}: {result.get('StandardErrorContent', 'No error details')}")
+        error_message = f"Command failed with status {result['Status']}: {result.get('StandardErrorContent', 'No error details')}"
+        logger.error(error_message)
+        raise Exception(error_message)
