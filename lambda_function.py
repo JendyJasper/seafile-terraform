@@ -2,6 +2,11 @@ import boto3
 import json
 import time
 import os
+import logging
+
+# Set up logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 def lambda_handler(event, context):
     # Retrieve environment variables with validation
@@ -35,11 +40,13 @@ def lambda_handler(event, context):
     )['Tags']
     
     if not tags:
-        print(f"Instance {instance_id} does not have SetupPending=true tag. Skipping.")
+        logger.info(f"Instance {instance_id} does not have SetupPending=true tag. Skipping.")
         return {
             'statusCode': 200,
             'body': json.dumps('Instance not targeted for setup')
         }
+
+    logger.info(f"Starting setup for instance {instance_id}")
 
     # SSM command with retry logic
     script = f"""
@@ -112,7 +119,7 @@ def lambda_handler(event, context):
             break  # Exit loop if command is sent successfully
         except ssm.exceptions.InvalidInstanceId:
             if attempt < max_attempts - 1:
-                print(f"Instance {instance_id} not ready for SSM (attempt {attempt + 1}/{max_attempts}). Retrying in {retry_interval} seconds...")
+                logger.info(f"Instance {instance_id} not ready for SSM (attempt {attempt + 1}/{max_attempts}). Retrying in {retry_interval} seconds...")
                 time.sleep(retry_interval)
             else:
                 raise Exception(f"Failed to send SSM command to {instance_id} after {max_attempts} attempts: Instance not ready")
@@ -134,6 +141,7 @@ def lambda_handler(event, context):
             Resources=[instance_id],
             Tags=[{'Key': 'SetupPending', 'Value': 'false'}]
         )
+        logger.info(f"Setup completed for instance {instance_id}, tag updated to SetupPending=false")
         return {
             'statusCode': 200,
             'body': json.dumps('Setup completed and tag updated')
