@@ -178,41 +178,6 @@ resource "aws_security_group" "seafile_sg" {
   tags = { Name = "seafile-sg" }
 }
 
-# EC2 Instance 
-module "ec2" {
-  source  = "terraform-aws-modules/ec2-instance/aws"
-  version = "~> 5.0"
-
-  name                   = "seafile-instance"
-  ami                    = data.aws_ami.amazon_linux_2.id
-  instance_type          = var.instance_type
-  subnet_id              = module.vpc.public_subnets[0]
-  vpc_security_group_ids = [aws_security_group.seafile_sg.id]
-  key_name               = aws_key_pair.seafile_key_pair.key_name
-  iam_instance_profile   = aws_iam_instance_profile.seafile_instance_profile.name
-  associate_public_ip_address = true
-
-  root_block_device = [{
-    volume_size           = 300
-    volume_type           = "gp2"
-    delete_on_termination = true
-  }]
-
-  tags = { Name = "seafile-instance" }
-}
-
-# Elastic IP
-resource "aws_eip" "seafile_eip" {
-  domain = "vpc"
-  tags   = { Name = "seafile-eip" }
-}
-
-resource "aws_eip_association" "seafile_eip_assoc" {
-  instance_id   = module.ec2.id
-  allocation_id = aws_eip.seafile_eip.id
-}
-
-
 # Lambda Role and Policy
 resource "aws_iam_role" "seafile_lambda_role" {
   name = "SeafileLambdaExecutionRole"
@@ -237,13 +202,18 @@ resource "aws_iam_role_policy" "seafile_lambda_policy" {
         Action   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
         Resource = [
           "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:*",
-          "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/${module.ec2.id}"
+          "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"  # Broader scope for future instances
         ]
       },
       {
         Effect   = "Allow"
         Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["events:*"]  # Adjusted to specific action needed
+        Resource = "arn:aws:events:${var.region}:${data.aws_caller_identity.current.account_id}:rule/SeafileSetupRule"
       }
     ]
   })
@@ -262,7 +232,7 @@ resource "aws_lambda_function" "seafile_lambda" {
   role          = aws_iam_role.seafile_lambda_role.arn
   handler       = "lambda_function.lambda_handler"
   runtime       = "python3.9"
-  timeout       = 300
+  timeout       = 600  # Increased to match SSM timeout
 
   environment {
     variables = {
@@ -273,6 +243,7 @@ resource "aws_lambda_function" "seafile_lambda" {
       BLOCK_BUCKET   = aws_s3_bucket.seafile_buckets["block"].id
     }
   }
+  depends_on = [aws_iam_role_policy.seafile_lambda_policy]  # Ensure policy is attached
 }
 
 # EventBridge Rule
@@ -289,16 +260,56 @@ resource "aws_cloudwatch_event_rule" "seafile_setup" {
   })
 }
 
-resource "aws_cloudwatch_event_target" "seafile_lambda_target" {
-  rule      = aws_cloudwatch_event_rule.seafile_setup.name
-  target_id = "SeafileLambda"
-  arn       = aws_lambda_function.seafile_lambda.arn
-}
-
 resource "aws_lambda_permission" "allow_eventbridge" {
   statement_id  = "AllowExecutionFromEventBridge"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.seafile_lambda.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.seafile_setup.arn
+}
+
+resource "aws_cloudwatch_event_target" "seafile_lambda_target" {
+  rule      = aws_cloudwatch_event_rule.seafile_setup.name
+  target_id = "SeafileLambda"
+  arn       = aws_lambda_function.seafile_lambda.arn
+}
+
+# EC2 Instance (Moved after Lambda to enforce dependency)
+module "ec2" {
+  source  = "terraform-aws-modules/ec2-instance/aws"
+  version = "~> 5.0"
+
+  name                   = "seafile-instance"
+  ami                    = data.aws_ami.amazon_linux_2.id
+  instance_type          = var.instance_type
+  subnet_id              = module.vpc.public_subnets[0]
+  vpc_security_group_ids = [aws_security_group.seafile_sg.id]
+  key_name               = aws_key_pair.seafile_key_pair.key_name
+  iam_instance_profile   = aws_iam_instance_profile.seafile_instance_profile.name
+  associate_public_ip_address = true
+
+  root_block_device = [{
+    volume_size           = 300
+    volume_type           = "gp2"
+    delete_on_termination = true
+  }]
+
+  tags = { Name = "seafile-instance" }
+
+  depends_on = [
+    aws_lambda_function.seafile_lambda,
+    aws_lambda_permission.allow_eventbridge,
+    aws_cloudwatch_event_rule.seafile_setup
+  ]  # Ensure Lambda is ready before EC2 creation
+}
+
+# Elastic IP
+resource "aws_eip" "seafile_eip" {
+  domain = "vpc"
+  tags   = { Name = "seafile-eip" }
+}
+
+resource "aws_eip_association" "seafile_eip_assoc" {
+  instance_id   = module.ec2.id
+  allocation_id = aws_eip.seafile_eip.id
 }
