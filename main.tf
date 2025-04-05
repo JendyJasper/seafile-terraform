@@ -304,11 +304,6 @@ module "ec2" {
     Name         = "seafile-instance"
     SetupPending = "true"
   }
-
-  depends_on = [
-    aws_lambda_function.seafile_lambda,
-    aws_lambda_permission.allow_eventbridge
-  ]
 }
 
 # Elastic IP
