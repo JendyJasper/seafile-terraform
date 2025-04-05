@@ -206,8 +206,8 @@ resource "aws_iam_role_policy" "seafile_lambda_policy" {
         Effect   = "Allow"
         Action   = ["ssm:SendCommand", "ssm:GetCommandInvocation"]
         Resource = [
-          "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:*",
-          "arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:instance/*"
+          "arn:aws:ssm:*",
+          "arn:aws:ec2:*"
         ]
       },
       {
@@ -304,8 +304,6 @@ module "ec2" {
   }
   depends_on = [
     aws_lambda_function.seafile_lambda,
-    aws_lambda_permission.allow_eventbridge,
-    aws_cloudwatch_event_rule.seafile_setup,
     aws_cloudwatch_event_target.seafile_lambda_target
   ]
 }
