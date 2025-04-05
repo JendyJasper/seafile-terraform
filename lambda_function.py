@@ -86,9 +86,17 @@ def lambda_handler(event, context):
     AWS_ACCESS_KEY_ID=$(sudo jq -r .access_key_id creds.json)
     AWS_SECRET_ACCESS_KEY=$(sudo jq -r .secret_access_key creds.json)
 
+    # Fetch all SSM parameters upfront
+    DOCKER_USERNAME=$(aws ssm get-parameter --name /seafile/docker/username --with-decryption --region {region} --query Parameter.Value --output text)
+    DOCKER_PASSWORD=$(aws ssm get-parameter --name /seafile/docker/password --with-decryption --region {region} --query Parameter.Value --output text)
+    MYSQL_PASSWORD=$(aws ssm get-parameter --name /seafile/mysql/password --with-decryption --region {region} --query Parameter.Value --output text)
+    DB_PASSWORD=$(aws ssm get-parameter --name /seafile/db/password --with-decryption --region {region} --query Parameter.Value --output text)
+    ADMIN_EMAIL=$(aws ssm get-parameter --name /seafile/admin_ui_login/username --with-decryption --region {region} --query Parameter.Value --output text)
+    ADMIN_PASSWORD=$(aws ssm get-parameter --name /seafile/admin_ui_login/password --with-decryption --region {region} --query Parameter.Value --output text)
+
     # Log in to the correct Docker registry (docker.seadrive.org)
     echo "Attempting login to docker.seadrive.org..."
-    if aws ssm get-parameter --name /seafile/docker/password --with-decryption --region {region} --query Parameter.Value --output text | sudo docker login docker.seadrive.org --username "$(aws ssm get-parameter --name /seafile/docker/username --with-decryption --region {region} --query Parameter.Value --output text)" --password-stdin; then
+    if echo "$DOCKER_PASSWORD" | sudo docker login docker.seadrive.org --username "$DOCKER_USERNAME" --password-stdin; then
         echo "Login to docker.seadrive.org successful"
     else
         echo "Login to docker.seadrive.org failed"
@@ -98,15 +106,15 @@ def lambda_handler(event, context):
     # Download docker-compose.yml
     sudo wget -O "docker-compose.yml" "https://manual.seafile.com/11.0/docker/docker-compose/pro/11.0/docker-compose.yml"
 
-    # Verify the downloaded docker-compose.yml syntax
-    sudo docker-compose -f docker-compose.yml config || (echo "Invalid docker-compose.yml syntax" && exit 1)
+    # Update environment variables in docker-compose.yml with actual values
+    sudo sed -i "s/MYSQL_ROOT_PASSWORD=db_dev/MYSQL_ROOT_PASSWORD=$MYSQL_PASSWORD/g" docker-compose.yml
+    sudo sed -i "s/DB_ROOT_PASSWD=db_dev/DB_ROOT_PASSWD=$DB_PASSWORD/g" docker-compose.yml
+    sudo sed -i "s/SEAFILE_ADMIN_EMAIL=me@example.com/SEAFILE_ADMIN_EMAIL=$ADMIN_EMAIL/g" docker-compose.yml
+    sudo sed -i "s/SEAFILE_ADMIN_PASSWORD=asecret/SEAFILE_ADMIN_PASSWORD=$ADMIN_PASSWORD/g" docker-compose.yml
+    sudo sed -i "s/SEAFILE_SERVER_HOSTNAME=example.seafile.com/SEAFILE_SERVER_HOSTNAME={eip_public_ip}/g" docker-compose.yml
 
-    # Update environment variables in docker-compose.yml
-    sudo sed -i 's/- MYSQL_ROOT_PASSWORD=db_dev/- MYSQL_ROOT_PASSWORD=$(aws ssm get-parameter --name \/seafile\/mysql\/password --with-decryption --region {region} --query Parameter.Value --output text | tr -d "\\n")/g' docker-compose.yml
-    sudo sed -i 's/- DB_ROOT_PASSWD=db_dev/- DB_ROOT_PASSWD=$(aws ssm get-parameter --name \/seafile\/db\/password --with-decryption --region {region} --query Parameter.Value --output text | tr -d "\\n")/g' docker-compose.yml
-    sudo sed -i 's/- SEAFILE_ADMIN_EMAIL=me@example.com/- SEAFILE_ADMIN_EMAIL=$(aws ssm get-parameter --name \/seafile\/admin_ui_login\/username --with-decryption --region {region} --query Parameter.Value --output text | tr -d "\\n")/g' docker-compose.yml
-    sudo sed -i 's/- SEAFILE_ADMIN_PASSWORD=asecret/- SEAFILE_ADMIN_PASSWORD=$(aws ssm get-parameter --name \/seafile\/admin_ui_login\/password --with-decryption --region {region} --query Parameter.Value --output text | tr -d "\\n")/g' docker-compose.yml
-    sudo sed -i 's/- SEAFILE_SERVER_HOSTNAME=example.seafile.com/- SEAFILE_SERVER_HOSTNAME={eip_public_ip}/g' docker-compose.yml
+    # Verify the updated docker-compose.yml syntax
+    sudo docker-compose -f docker-compose.yml config || (echo "Invalid docker-compose.yml syntax" && exit 1)
 
     # Add redis service to docker-compose.yml
     sudo sed -i '/networks:/i \  redis:\\n    image: redis:6\\n    container_name: seafile-redis\\n    networks:\\n      - seafile-net' docker-compose.yml
@@ -120,12 +128,15 @@ def lambda_handler(event, context):
     # Deploy Seafile
     sudo docker-compose up -d
 
+    # Ensure seafile.conf exists before appending configurations
+    sudo docker exec seafile sh -c "[ -f /opt/seafile-data/seafile/seafile.conf ] || touch /opt/seafile-data/seafile/seafile.conf"
+
     # Configure Seafile for S3 and Redis
     sudo docker exec seafile sh -c "if ! grep -q '[commit_object_backend]' /opt/seafile-data/seafile/seafile.conf; then echo '[commit_object_backend]' >> /opt/seafile-data/seafile/seafile.conf; fi"
     sudo docker exec seafile sh -c "if ! grep -q 'name = s3' /opt/seafile-data/seafile/seafile.conf; then echo 'name = s3' >> /opt/seafile-data/seafile/seafile.conf; fi"
     sudo docker exec seafile sh -c "if ! grep -q 'bucket = {commit_bucket}' /opt/seafile-data/seafile/seafile.conf; then echo 'bucket = {commit_bucket}' >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'key_id = ' /opt/seafile-data/seafile/seafile.conf; then echo 'key_id = '$AWS_ACCESS_KEY_ID >> /opt/seafile-data/seafile/seafile.conf; fi"
-    sudo docker exec seafile sh -c "if ! grep -q 'key = ' /opt/seafile-data/seafile/seafile.conf; then echo 'key = '$AWS_SECRET_ACCESS_KEY >> /opt/seafile-data/seafile/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'key_id = ' /opt/seafile-data/seafile/seafile.conf; then echo 'key_id = $AWS_ACCESS_KEY_ID' >> /opt/seafile-data/seafile/seafile.conf; fi"
+    sudo docker exec seafile sh -c "if ! grep -q 'key = ' /opt/seafile-data/seafile/seafile.conf; then echo 'key = $AWS_SECRET_ACCESS_KEY' >> /opt/seafile-data/seafile/seafile.conf; fi"
     sudo docker exec seafile sh -c "if ! grep -q 'use_v4_signature = true' /opt/seafile-data/seafile/seafile.conf; then echo 'use_v4_signature = true' >> /opt/seafile-data/seafile/seafile.conf; fi"
     sudo docker exec seafile sh -c "if ! grep -q 'aws_region = {region}' /opt/seafile-data/seafile/seafile.conf; then echo 'aws_region = {region}' >> /opt/seafile-data/seafile/seafile.conf; fi"
     sudo docker exec seafile sh -c "if ! grep -q '[fs_object_backend]' /opt/seafile-data/seafile/seafile.conf; then echo '[fs_object_backend]' >> /opt/seafile-data/seafile/seafile.conf; fi"
@@ -142,7 +153,6 @@ def lambda_handler(event, context):
     sudo echo 'use-sigv4 = True' >> ~/.boto
     sudo echo 'host = s3.{region}.amazonaws.com' >> ~/.boto
 
-    #477a70d8-70e9-4e6b-9c7e-7e7f9c7e7e7f
     # Restart services
     sudo docker-compose restart seafile
     sudo docker-compose restart redis
