@@ -62,11 +62,7 @@ resource "aws_key_pair" "seafile_key_pair" {
 }
 
 # EC2 Instance
-module "ec2" {
-  source  = "terraform-aws-modules/ec2-instance/aws"
-  version = "~> 5.0"
-
-  name                   = "seafile-instance"
+resource "aws_instance" "seafile_instance" {
   ami                    = data.aws_ami.amazon_linux_2.id
   instance_type          = var.instance_type
   subnet_id              = module.vpc.public_subnets[0]
@@ -75,23 +71,23 @@ module "ec2" {
   iam_instance_profile   = aws_iam_instance_profile.seafile_instance_profile.name
   associate_public_ip_address = true
 
-  root_block_device = [{
+  root_block_device {
     volume_size           = 300
     volume_type           = "gp2"
     delete_on_termination = true
-  }]
+  }
 
   tags = {
     Name         = "seafile-instance"
     SetupPending = "true"
   }
 
-  # Ignore changes to the SetupPending tag to prevent Terraform from resetting it
   lifecycle {
     ignore_changes = [
       tags["SetupPending"]
     ]
   }
+
   depends_on = [aws_cloudwatch_event_target.seafile_lambda_target]
 }
 
@@ -102,6 +98,6 @@ resource "aws_eip" "seafile_eip" {
 }
 
 resource "aws_eip_association" "seafile_eip_assoc" {
-  instance_id   = module.ec2.id
+  instance_id   = aws_instance.seafile_instance.id
   allocation_id = aws_eip.seafile_eip.id
 }

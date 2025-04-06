@@ -60,7 +60,7 @@ resource "aws_lambda_function" "rotate_keys_lambda" {
   environment {
     variables = {
       REGION      = var.region  # Changed from AWS_REGION to REGION
-      INSTANCE_ID = module.ec2.id
+      INSTANCE_ID = aws_instance.seafile_instance.id
     }
   }
 
