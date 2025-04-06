@@ -23,14 +23,22 @@ The deployment process involves:
 
 ## Repository Structure
 
-* `lambda_function.py`: AWS Lambda function script to configure the EC2 instance with Seafile.
 * `.github/workflows/terraform.yml`: GitHub Actions workflow for Terraform deployment.
 * `.github/workflows/destroy.yml`: GitHub Actions workflow for Terraform destruction.
 * `data.tf`: Terraform data sources for fetching the AWS account ID and Amazon Linux 2 AMI.
+* `ec2.tf`: Terraform configuration for the EC2 instance, security groups, and Elastic IP.
+* `lambda_function.py`: AWS Lambda function script for `SetupEC2Lambda` to configure the EC2 instance with Seafile.
 * `locals.tf`: Local variables for Seafile S3 buckets and SSM parameters.
 * `main.tf`: Main Terraform configuration for provisioning AWS resources.
 * `outputs.tf`: Terraform outputs for the Seafile Elastic IP and S3 bucket names.
+* `rotate_keys_lambda.py`: AWS Lambda function script for `RotateKeysLambda` to rotate IAM access keys.
+* `rotate_keys_lambda.tf`: Terraform configuration for the `RotateKeysLambda` function and its EventBridge schedule.
+* `s3.tf`: Terraform configuration for S3 buckets used by Seafile.
+* `setup_lambda.tf`: Terraform configuration for the `SetupEC2Lambda` function and its EventBridge trigger.
+* `update_config_lambda.py`: AWS Lambda function script for `UpdateConfigLambda` to update `seafile.conf` with new IAM credentials.
+* `update_config_lambda.tf`: Terraform configuration for the `UpdateConfigLambda` function and its EventBridge trigger on Parameter Store changes.
 * `variables.tf`: Terraform variables for region, instance type, and sensitive credentials.
+* `vpc.tf`: Terraform configuration for the VPC and networking resources.
 
 ## Prerequisites
 
@@ -130,105 +138,118 @@ To allow GitHub Actions to interact with AWS, you need to set up an OIDC identit
 2. **Attach a Policy**:
    * Click **Create policy** to create a new policy named `TerraformManageResourcesPolicy`.
    * Use the JSON editor and paste the following policy (adjust the account ID and region as needed):
-     ```json
-     {
-         "Version": "2012-10-17",
-         "Statement": [
-             {
-                 "Effect": "Allow",
-                 "Action": ["ec2:*"],
-                 "Resource": [
-                     "arn:aws:ec2:<region>:<account-id>:*",
-                     "arn:aws:ec2:<region>::image/*"
-                 ]
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": ["ec2:Describe*", "ec2:DescribeImages"],
-                 "Resource": "*"
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": ["s3:*"],
-                 "Resource": [
-                     "arn:aws:s3:::seafile-storage-bucket-*",
-                     "arn:aws:s3:::seafile-<region>-*"
-                 ]
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": [
-                     "s3:CreateBucket",
-                     "s3:PutBucketVersioning",
-                     "s3:GetObject",
-                     "s3:PutObject",
-                     "s3:DeleteObject",
-                     "s3:ListBucket",
-                     "s3:GetReplicationConfiguration",
-                     "s3:GetEncryptionConfiguration"
-                 ],
-                 "Resource": [
-                     "arn:aws:s3:::seafile-<region>-*",
-                     "arn:aws:s3:::seafile-<region>-*/*"
-                 ]
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": [
-                     "dynamodb:CreateTable",
-                     "dynamodb:GetItem",
-                     "dynamodb:PutItem",
-                     "dynamodb:DeleteItem"
-                 ],
-                 "Resource": "arn:aws:dynamodb:<region>:<account-id>:table/seafile-terraform-locks"
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": ["iam:*"],
-                 "Resource": [
-                     "arn:aws:iam::<account-id>:role/SeafileEC2Role",
-                     "arn:aws:iam::<account-id>:policy/SeafileS3AndSSMAccessPolicy",
-                     "arn:aws:iam::<account-id>:policy/SeafileServiceAccountS3Policy",
-                     "arn:aws:iam::<account-id>:instance-profile/seafile-instance-profile",
-                     "arn:aws:iam::<account-id>:user/seafile-service-account",
-                     "arn:aws:iam::<account-id>:role/SeafileLambdaExecutionRole",
-                     "arn:aws:iam::<account-id>:policy/SeafileLambdaPolicy"
-                 ]
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": ["ssm:*"],
-                 "Resource": "arn:aws:ssm:<region>:<account-id>:parameter/seafile/*"
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": ["ssm:GetParameter", "ssm:GetParameters", "ssm:ListTagsForResource"],
-                 "Resource": "*"
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": "ssm:DescribeParameters",
-                 "Resource": "*"
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": ["lambda:*"],
-                 "Resource": "arn:aws:lambda:<region>:<account-id>:function:SetupEC2Lambda"
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": ["events:*"],
-                 "Resource": "arn:aws:events:<region>:<account-id>:rule/SeafileSetupRule"
-             },
-             {
-                 "Effect": "Allow",
-                 "Action": ["logs:*"],
-                 "Resource": "arn:aws:logs:<region>:<account-id>:*"
-             }
-         ]
-     }
-     ```
-   * Replace `<region>` with your AWS region (e.g., `ap-southeast-1`) and `<account-id>` with your AWS account ID.
+     
+   ```json
+   {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": ["ec2:*"],
+            "Resource": [
+                "arn:aws:ec2:<region>:<account-id>:*",
+                "arn:aws:ec2:<region>::image/*"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["ec2:Describe*", "ec2:DescribeImages"],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["s3:*"],
+            "Resource": [
+                "arn:aws:s3:::seafile-storage-bucket-*",
+                "arn:aws:s3:::seafile-<region>-*"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:CreateBucket",
+                "s3:PutBucketVersioning",
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+                "s3:ListBucket",
+                "s3:GetReplicationConfiguration",
+                "s3:GetEncryptionConfiguration"
+            ],
+            "Resource": [
+                "arn:aws:s3:::seafile-<region>-*",
+                "arn:aws:s3:::seafile-<region>-*/*"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:CreateTable",
+                "dynamodb:GetItem",
+                "dynamodb:PutItem",
+                "dynamodb:DeleteItem"
+            ],
+            "Resource": "arn:aws:dynamodb:<region>:<account-id>:table/seafile-terraform-locks"
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["iam:*"],
+            "Resource": [
+                "arn:aws:iam::<account-id>:role/SeafileEC2Role",
+                "arn:aws:iam::<account-id>:policy/SeafileS3AndSSMAccessPolicy",
+                "arn:aws:iam::<account-id>:policy/SeafileServiceAccountS3Policy",
+                "arn:aws:iam::<account-id>:instance-profile/seafile-instance-profile",
+                "arn:aws:iam::<account-id>:user/seafile-service-account",
+                "arn:aws:iam::<account-id>:role/SeafileLambdaExecutionRole",
+                "arn:aws:iam::<account-id>:policy/SeafileLambdaPolicy",
+                "arn:aws:iam::<account-id>:policy/RotateKeysLambdaPolicy",
+                "arn:aws:iam::<account-id>:role/RotateKeysLambdaExecutionRole",
+                "arn:aws:iam::<account-id>:policy/UpdateConfigLambdaPolicy",
+                "arn:aws:iam::<account-id>:role/UpdateConfigLambdaExecutionRole"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["ssm:*"],
+            "Resource": "arn:aws:ssm:<region>:<account-id>:parameter/seafile/*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["ssm:GetParameter", "ssm:GetParameters", "ssm:ListTagsForResource"],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "ssm:DescribeParameters",
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["lambda:*"],
+            "Resource": [
+                "arn:aws:lambda:<region>:<account-id>:function:SetupEC2Lambda",
+                "arn:aws:lambda:<region>:<account-id>:function:RotateKeysLambda",
+                "arn:aws:lambda:<region>:<account-id>:function:UpdateConfigLambda"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["events:*"],
+            "Resource": [
+                "arn:aws:events:<region>:<account-id>:rule/SeafileSetupRule",
+                "arn:aws:events:<region>:<account-id>:rule/RotateKeysSchedule",
+                "arn:aws:events:<region>:<account-id>:rule/ParameterStoreChangeRule"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["logs:*"],
+            "Resource": "arn:aws:logs:<region>:<account-id>:*"
+        }
+    ]
+   }
+
+* Replace `<region>` with your AWS region (e.g., `ap-southeast-1`) and `<account-id>` with your AWS account ID.
    * Click **Next**, name the policy `TerraformManageResourcesPolicy`, and click **Create policy**.
    * Back in the role creation wizard, attach the `TerraformManageResourcesPolicy` policy to the role.
    * Click **Next**.
@@ -388,6 +409,7 @@ The following AWS SSM Parameter Store paths are used to store sensitive credenti
 | `/seafile/mysql/password`         | Password for MySQL database                      |
 | `/seafile/docker/username`        | Username for Docker login                        |
 | `/seafile/docker/password`        | Password for Docker login                        |
+| `/seafile/old_iam_user/credentials`| Old IAM credentials (temporary during rotation)
 
 To retrieve a parameter using the AWS CLI, for example:
 
@@ -591,6 +613,7 @@ To update Seafile to a newer version:
 * **SSM Parameter Store**: Sensitive credentials are stored in SSM Parameter Store as `SecureString` to ensure encryption.
 * **IAM Roles**: Use the principle of least privilege for all IAM roles.
 * **Non-Root User**: Seafile runs as a non-root user (`NON_ROOT=true`), improving container security.
+* **IAM Key Rotation**: Access keys are rotated monthly, and old keys are deleted after the new keys are applied.
 * **Network Access**: The EC2 instance is in a VPC with a security group that allows HTTP (port 80), HTTPS (port 443), and restricted SSH access.
 * **OIDC**: GitHub Actions uses OIDC to securely assume the `TerraformExecutionRole`, avoiding long-lived credentials.
 
