@@ -85,6 +85,13 @@ module "ec2" {
     Name         = "seafile-instance"
     SetupPending = "true"
   }
+
+  # Ignore changes to the SetupPending tag to prevent Terraform from resetting it
+  lifecycle {
+    ignore_changes = [
+      tags["SetupPending"]
+    ]
+  }
   depends_on = [aws_cloudwatch_event_target.seafile_lambda_target]
 }
 
