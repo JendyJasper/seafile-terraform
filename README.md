@@ -45,28 +45,61 @@ Before using this repository, ensure you have the following:
 * **Terraform**:
   * Installed locally if running Terraform manually (version 1.11.3).
 * **Docker Hub Credentials**:
-  * A Docker Hub account with access to the `docker.seadrive.org` registry for pulling Seafile Pro images.
-  * Seafile provides default credentials for evaluation purposes at [https://customer.seafile.com/downloads/](https://customer.seafile.com/downloads/). You can use these credentials or your own.
+  * Seafile provides default credentials for evaluation purposes at [https://customer.seafile.com/downloads/](https://customer.seafile.com/downloads/). You can use these credentials.
 
 ## Setup Instructions
 
-### 1. Clone the Repository
+### Step 1: Clone the Public Repository
 
 1. **Clone the Repository**:
-   * Clone this repository to your local machine:
+   * Use the `git clone` command to download a copy of this repository to your local machine:
      ```bash
-     git clone https://github.com/<your-username>/seafile-deployment.git
-     cd seafile-deployment
+     git clone https://github.com/JendyJasper/seafile-terraform.git
      ```
-   * Replace `<your-username>` with your GitHub username. If you haven’t created the repository yet, follow the steps below to set it up.
+   * This creates a directory named `seafile-terraform` containing the repository files.
 
-2. **Create a GitHub Repository** (if not already done):
-   * Go to GitHub and create a new repository named `seafile-deployment`.
-   * Push the cloned repository to your GitHub account:
+2. **Navigate to the Repository Directory**:
+   * Change into the cloned repository’s directory:
+     ```bash
+     cd seafile-terraform
+     ```
+
+### Step 2: Create Your Own GitHub Repository
+
+1. **Create a New Repository on GitHub**:
+   * Log in to your GitHub account.
+   * Click the **+** icon in the top-right corner and select **New repository**.
+   * Name it (e.g., `seafile-deployment`), choose visibility (public or private), and **do not initialize it with a README** (since you’ll be pushing an existing repository).
+   * Click **Create repository** and note the repository URL (e.g., `https://github.com/<your-username>/seafile-deployment.git`).
+
+### Step 3: Push the Cloned Repository to Your GitHub Account
+
+1. **Update the Remote URL**:
+   * Replace the original repository’s remote URL with your new GitHub repository URL:
      ```bash
      git remote set-url origin https://github.com/<your-username>/seafile-deployment.git
+     ```
+   * Replace `<your-username>` with your actual GitHub username.
+
+2. **Verify the Remote** (Optional):
+   * Check that the remote URL has been updated correctly:
+     ```bash
+     git remote -v
+     ```
+
+3. **Push to Your Repository**:
+   * Push the cloned repository to your GitHub account. Assuming the default branch is `main`:
+     ```bash
      git push origin main
      ```
+   * If the default branch is `master` (check with `git branch`), use `git push origin master` instead.
+   * You may be prompted to authenticate with your GitHub credentials. If using a personal access token (required for HTTPS since August 2021), enter it when prompted.
+
+### Notes
+- **Authentication**: Ensure your Git client is configured with your GitHub credentials. You can set this up globally with:
+  ```bash
+  git config --global user.name "Your Name"
+  git config --global user.email "your-email@example.com"
 
 ### 2. Set Up OIDC for GitHub Actions
 
@@ -254,7 +287,7 @@ In your GitHub repository (`seafile-deployment`), add the following secrets unde
 | DOCKER_USERNAME        | Docker Hub username                      | Use default from Seafile  |
 | DOCKER_PASSWORD        | Docker Hub password                      | Use default from Seafile  |
 
-> **Note**: For the `BACKEND_BUCKET_SUFFIX`, use a random, unique value (at least 8 characters long) to ensure the S3 bucket name is globally unique. For example, `randomsuffix123`.
+> **Note**: For the `BACKEND_BUCKET_SUFFIX`, use a random, unique value (at least 8 characters long) to ensure the S3 bucket name is globally unique. For example, `randomsuffix123` Also, MYSQL_PASSWORD and av has to be the same value.
 
 ### 4. Deploy the Infrastructure
 
@@ -262,9 +295,9 @@ In your GitHub repository (`seafile-deployment`), add the following secrets unde
 
 1. **Push to Any Branch**:
    * The `terraform.yml` workflow triggers on pushes to any branch. For example, push to the `main` branch:
-     ```bash
-     git push origin main
-     ```
+     
+     ```git push origin main```
+     
    * This triggers the `terraform.yml` workflow, which will:
      * Set up the Terraform backend (S3 bucket and DynamoDB table).
      * Run `terraform init`, `terraform plan`, and `terraform apply`.
@@ -285,9 +318,7 @@ In your GitHub repository (`seafile-deployment`), add the following secrets unde
 
 2. **Set Up AWS Credentials**:
    * Configure your AWS credentials using the AWS CLI:
-     ```bash
-     aws configure
-     ```
+     `aws configure`
 
 3. **Update the Backend Configuration**:
    * In `main.tf`, update the backend `"s3"` block with your values:
@@ -300,8 +331,8 @@ In your GitHub repository (`seafile-deployment`), add the following secrets unde
          dynamodb_table = "seafile-terraform-locks"
        }
      }
-     ```
-   * Replace `<region>` with your AWS region and `<suffix>` with a unique value (e.g., `randomsuffix123`).
+    
+    * Replace `<region>` with your AWS region and `<suffix>` with a unique value (e.g., `randomsuffix123`).
 
 4. **Set Sensitive Variables as Environment Variables**:
    * Instead of using a `terraform.tfvars` file for sensitive values, set them as environment variables to avoid storing secrets in plain text. For example:
@@ -566,7 +597,3 @@ To update Seafile to a newer version:
 ## Contributing
 
 Contributions are welcome! Please submit a pull request with your changes or open an issue to discuss improvements.
-
-## License
-
-This project is licensed under the MIT License. See the file for details.
