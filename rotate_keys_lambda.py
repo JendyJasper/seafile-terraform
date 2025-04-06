@@ -34,9 +34,10 @@ def lambda_handler(event, context):
         # Set the IMDSv2 token for AWS CLI commands
         export AWS_METADATA_SERVICE_TOKEN=$TOKEN
 
-        # Retrieve the current access key ID from Parameter Store
+        # Retrieve the current credentials from Parameter Store
         CURRENT_CREDENTIALS=$(aws ssm get-parameter --name "/seafile/iam_user/credentials" --with-decryption --region {region} --query Parameter.Value --output text)
         CURRENT_ACCESS_KEY_ID=$(echo $CURRENT_CREDENTIALS | jq -r '.access_key_id')
+        CURRENT_SECRET_ACCESS_KEY=$(echo $CURRENT_CREDENTIALS | jq -r '.secret_access_key')
 
         # Generate a new access key for the seafile-service-account user
         NEW_CREDENTIALS=$(aws iam create-access-key --user-name seafile-service-account --query 'AccessKey' --output json)
@@ -49,8 +50,9 @@ def lambda_handler(event, context):
         NEW_CREDENTIALS_JSON=$(jq -n --arg access_key_id "$NEW_ACCESS_KEY_ID" --arg secret_access_key "$NEW_SECRET_ACCESS_KEY" '{{'access_key_id': $access_key_id, 'secret_access_key': $secret_access_key}}')
         aws ssm put-parameter --name "/seafile/iam_user/credentials" --value "$NEW_CREDENTIALS_JSON" --type SecureString --overwrite --region {region}
 
-        # Store the old access key ID in a temporary Parameter Store path
-        aws ssm put-parameter --name "/seafile/old_iam_user/credentials" --value "$CURRENT_ACCESS_KEY_ID" --type SecureString --region {region}
+        # Store the old credentials (both access key ID and secret access key) in a temporary Parameter Store path
+        OLD_CREDENTIALS_JSON=$(jq -n --arg access_key_id "$CURRENT_ACCESS_KEY_ID" --arg secret_access_key "$CURRENT_SECRET_ACCESS_KEY" '{{'access_key_id': $access_key_id, 'secret_access_key': $secret_access_key}}')
+        aws ssm put-parameter --name "/seafile/old_iam_user/credentials" --value "$OLD_CREDENTIALS_JSON" --type SecureString --region {region}
 
         echo "Key rotation completed. New access key ID: $NEW_ACCESS_KEY_ID"
         """

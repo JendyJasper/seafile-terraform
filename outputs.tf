@@ -7,7 +7,7 @@ output "seafile_s3_buckets" {
   description = "Map of Seafile S3 bucket names (commit, fs, block)"
 }
 
-# output "rotate_keys_lambda_name" {
-#   description = "Name of the RotateKeysLambda function"
-#   value       = aws_lambda_function.rotate_keys_lambda.function_name
-# }
+output "rotate_keys_lambda_name" {
+  description = "Name of the RotateKeysLambda function"
+  value       = aws_lambda_function.rotate_keys_lambda.function_name
+}
