@@ -5,6 +5,17 @@ resource "aws_s3_bucket" "seafile_buckets" {
   tags     = { Name = each.value }
 }
 
+# Enable versioning for each Seafile bucket
+resource "aws_s3_bucket_versioning" "seafile_buckets_versioning" {
+  for_each = aws_s3_bucket.seafile_buckets
+
+  bucket = each.value.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 # IAM Policy for Seafile Service Account S3 Access
 resource "aws_iam_policy" "seafile_service_account_s3_policy" {
   name        = "SeafileServiceAccountS3Policy"
