@@ -27,8 +27,7 @@ resource "aws_iam_access_key" "seafile_service_account_key" {
 
   lifecycle {
     ignore_changes = [
-      id,     # Ignore changes to the access key ID
-      secret  # Ignore changes to the secret access key
+      id     # Ignore changes to the access key ID
     ]
   }
 }
