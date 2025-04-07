@@ -24,6 +24,13 @@ resource "aws_iam_user" "seafile_service_account" {
 
 resource "aws_iam_access_key" "seafile_service_account_key" {
   user = aws_iam_user.seafile_service_account.name
+
+  lifecycle {
+    ignore_changes = [
+      id,     # Ignore changes to the access key ID
+      secret  # Ignore changes to the secret access key
+    ]
+  }
 }
 
 resource "aws_ssm_parameter" "seafile_iam_credentials" {
@@ -34,6 +41,11 @@ resource "aws_ssm_parameter" "seafile_iam_credentials" {
     access_key_id     = aws_iam_access_key.seafile_service_account_key.id
     secret_access_key = aws_iam_access_key.seafile_service_account_key.secret
   })
+  lifecycle {
+    ignore_changes = [
+      value  # Ignore changes to the parameter value
+    ]
+  }
 }
 
 # Key Pair for EC2
